@@ -119,7 +119,7 @@ const rowToTicket = (row) => ({
   serviceType: row.service_type || "",
   itemType: row.item_type || "",
   warranty: row.warranty || "",
-  quantity: row.quantity ?? "",
+  quantity: row.quantity === null || row.quantity === undefined ? "" : String(row.quantity),
   itemDescription: row.item_description || "",
   faultDescription: row.fault_description || "",
   customerName: row.customer_name || "",
@@ -127,8 +127,8 @@ const rowToTicket = (row) => ({
   openDate: { value: row.open_date, confirmed: !!row.open_date_confirmed },
   phonePrimary: row.phone_primary || "",
   phoneSecondary: row.phone_secondary || "",
-  repairCost: row.repair_cost ?? "",
-  paidAmount: row.paid_amount ?? "",
+  repairCost: row.repair_cost === null || row.repair_cost === undefined ? "" : String(row.repair_cost),
+  paidAmount: row.paid_amount === null || row.paid_amount === undefined ? "" : String(row.paid_amount),
   paymentMethod: row.payment_method || "",
   notes2: row.notes2 || "",
   status: row.status || "",
@@ -148,7 +148,8 @@ const rowToTicket = (row) => ({
     notes: row.contact2?.notes || ""
   },
   pickedUpDate: { value: row.picked_up_date, confirmed: !!row.picked_up_date_confirmed },
-  createdAt: row.created_at
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
 });
 
 const contactToJson = (c) => ({
@@ -167,6 +168,8 @@ const fmtDate = (iso) => {
   return `${d}/${m}/${y}`;
 };
 const num = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
+const isDraftTicket = (t) =>
+  !t.customerName?.trim() || !t.phonePrimary || t.phonePrimary.length !== 10 || !t.itemType || !t.serviceType;
 
 /* ---------------------------------------------------------------- */
 /* Small building blocks (unchanged from the prototype)               */
@@ -330,7 +333,7 @@ function TicketForm({
   const [showSummary, setShowSummary] = useState(false);
   const [newEmployeeName, setNewEmployeeName] = useState("");
 
-  useEffect(() => setT(ticket), [ticket.id, ticket.updated_at]);
+  useEffect(() => setT(ticket), [ticket.id, ticket.updatedAt]);
 
   useEffect(() => {
     const dirty = JSON.stringify(t) !== JSON.stringify(ticket);
@@ -898,6 +901,10 @@ export default function App() {
     [tickets, branch]
   );
   const allTicketsForBranch = useMemo(() => tickets.filter((t) => t.branch === branch), [tickets, branch]);
+  const draftsForBranch = useMemo(
+    () => tickets.filter((t) => t.branch === branch && !t.pickedUpDate.confirmed && isDraftTicket(t)),
+    [tickets, branch]
+  );
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("ticketNumber");
@@ -957,6 +964,9 @@ export default function App() {
         {view !== "form" && (
           <div className="lfy-tabbar max-w-5xl mx-auto flex gap-1 mt-3 rounded-lg p-1 w-fit">
             <button onClick={() => requestNavigate("list")} className={`lfy-tabbar-btn px-3 py-1.5 rounded-md text-sm font-medium ${view === "list" ? "active" : ""}`}>קריאות פתוחות</button>
+            <button onClick={() => requestNavigate("drafts")} className={`lfy-tabbar-btn px-3 py-1.5 rounded-md text-sm font-medium ${view === "drafts" ? "active" : ""}`}>
+              טיוטות{draftsForBranch.length > 0 ? ` (${draftsForBranch.length})` : ""}
+            </button>
             <button onClick={() => requestNavigate("search")} className={`lfy-tabbar-btn px-3 py-1.5 rounded-md text-sm font-medium ${view === "search" ? "active" : ""}`}>חיפוש</button>
           </div>
         )}
@@ -997,6 +1007,21 @@ export default function App() {
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {filteredList.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} />)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "drafts" && (
+          <div className="flex flex-col gap-4">
+            <div className="lfy-muted text-sm">
+              קריאות עם פרטים חסרים (שם לקוח, טלפון תקין, סוג פריט או סוג טיפול) — כולל טיוטות שנשמרו בעת יציאה מהטופס.
+            </div>
+            {draftsForBranch.length === 0 ? (
+              <div className="lfy-muted text-center py-16 text-sm">אין טיוטות פתוחות בסניף {branch}</div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {draftsForBranch.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} />)}
               </div>
             )}
           </div>

@@ -148,6 +148,7 @@ const rowToTicket = (row) => ({
     notes: row.contact2?.notes || ""
   },
   pickedUpDate: { value: row.picked_up_date, confirmed: !!row.picked_up_date_confirmed },
+  photoUrl: row.photo_url || null,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
@@ -323,7 +324,7 @@ const FORM_TABS = [
 
 function TicketForm({
   ticket, employees, isAdmin, onCancel, addEmployee, removeEmployee, existingNumbers,
-  onDirtyChange, saveInfo, saveStatus, saveFollowup, savePickup, setTicketNumberAdmin
+  onDirtyChange, saveInfo, saveStatus, saveFollowup, savePickup, setTicketNumberAdmin, uploadPhoto
 }) {
   const [t, setT] = useState(ticket);
   const [tab, setTab] = useState("info");
@@ -332,6 +333,8 @@ function TicketForm({
   const [savingTab, setSavingTab] = useState(null);
   const [showSummary, setShowSummary] = useState(false);
   const [newEmployeeName, setNewEmployeeName] = useState("");
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState("");
 
   useEffect(() => setT(ticket), [ticket.id, ticket.updatedAt]);
 
@@ -346,6 +349,22 @@ function TicketForm({
   const flashSaved = (tabKey) => {
     setSavedTab(tabKey);
     setTimeout(() => setSavedTab((cur) => (cur === tabKey ? null : cur)), 1800);
+  };
+
+  const handlePhotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPhoto(true);
+    setPhotoError("");
+    try {
+      const url = await uploadPhoto(file);
+      update({ photoUrl: url });
+    } catch (err) {
+      setPhotoError("שגיאה בהעלאת התמונה, נסו שוב");
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = "";
+    }
   };
 
   const validateInfo = () => {
@@ -468,6 +487,23 @@ function TicketForm({
             <Field label="סוג טיפול" required error={errors.serviceType}>
               <PillChoice value={t.serviceType} onChange={(v) => update({ serviceType: v })} options={SERVICE_TYPES} />
             </Field>
+
+            {t.serviceType === "הזמנה" && (
+              <Field label="תמונה" error={photoError}>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {t.photoUrl && (
+                    <img src={t.photoUrl} alt="תמונת הזמנה" className="rounded-lg object-cover" style={{ width: 96, height: 96 }} />
+                  )}
+                  <label className="lfy-btn-outline rounded-lg px-3 py-2 text-sm font-medium cursor-pointer">
+                    {uploadingPhoto ? "מעלה..." : t.photoUrl ? "החלף תמונה" : "צלם / העלה תמונה"}
+                    <input type="file" accept="image/*" onChange={handlePhotoChange} disabled={uploadingPhoto} className="hidden" />
+                  </label>
+                  {t.photoUrl && !uploadingPhoto && (
+                    <button type="button" onClick={() => update({ photoUrl: null })} className="lfy-muted text-xs">הסר תמונה</button>
+                  )}
+                </div>
+              </Field>
+            )}
 
             <Field label="סוג פריט" required error={errors.itemType}>
               <Select value={t.itemType} onChange={(v) => update({ itemType: v })} options={ITEM_TYPES} placeholder="בחר פריט..." />
@@ -672,6 +708,7 @@ function TicketCard({ t, onOpen }) {
 function SearchView({ tickets, onOpen }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [serviceTypeFilter, setServiceTypeFilter] = useState("all");
   const [sortBy, setSortBy] = useState("ticketNumber");
   const [sortDir, setSortDir] = useState("asc");
   const [fromDate, setFromDate] = useState("");
@@ -686,6 +723,7 @@ function SearchView({ tickets, onOpen }) {
       );
     }
     if (statusFilter !== "all") list = list.filter((t) => t.status === statusFilter);
+    if (serviceTypeFilter !== "all") list = list.filter((t) => t.serviceType === serviceTypeFilter);
     if (fromDate) list = list.filter((t) => (t.openDate.value || "") >= fromDate);
     if (toDate) list = list.filter((t) => (t.openDate.value || "") <= toDate);
 
@@ -697,7 +735,7 @@ function SearchView({ tickets, onOpen }) {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [tickets, q, statusFilter, sortBy, sortDir, fromDate, toDate]);
+  }, [tickets, q, statusFilter, serviceTypeFilter, sortBy, sortDir, fromDate, toDate]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -707,10 +745,36 @@ function SearchView({ tickets, onOpen }) {
           style={{ colorScheme: "light" }} className="flex-1 outline-none text-sm bg-transparent" />
       </div>
 
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <button onClick={() => setStatusFilter("all")}
+          className={`lfy-status-filter whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-medium ${statusFilter === "all" ? "active" : ""}`}>
+          הכל
+        </button>
+        {STATUS_OPTIONS.map((s) => (
+          <button key={s} onClick={() => setStatusFilter(s)}
+            className={`lfy-status-filter whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-medium ${statusFilter === s ? "active" : ""}`}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="lfy-label text-sm font-medium">סוג טיפול</span>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          <button onClick={() => setServiceTypeFilter("all")}
+            className={`lfy-status-filter whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-medium ${serviceTypeFilter === "all" ? "active" : ""}`}>
+            הכל
+          </button>
+          {SERVICE_TYPES.map((s) => (
+            <button key={s} onClick={() => setServiceTypeFilter(s)}
+              className={`lfy-status-filter whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-medium ${serviceTypeFilter === s ? "active" : ""}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid sm:grid-cols-2 gap-3">
-        <Field label="סטטוס">
-          <Select value={statusFilter === "all" ? "" : statusFilter} onChange={(v) => setStatusFilter(v || "all")} options={STATUS_OPTIONS} placeholder="כל הסטטוסים" />
-        </Field>
         <Field label="מיון">
           <div className="flex gap-2">
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ colorScheme: "light" }} className="lfy-select flex-1 rounded-lg px-3 py-2 text-sm">
@@ -723,6 +787,7 @@ function SearchView({ tickets, onOpen }) {
             </button>
           </div>
         </Field>
+        <div />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
@@ -819,10 +884,20 @@ export default function App() {
       p_quantity: num(t.quantity), p_item_description: t.itemDescription, p_fault_description: t.faultDescription,
       p_customer_name: t.customerName, p_seller_name: t.sellerName, p_open_date: t.openDate.value,
       p_open_date_confirmed: t.openDate.confirmed, p_phone_primary: t.phonePrimary, p_phone_secondary: t.phoneSecondary,
-      p_repair_cost: num(t.repairCost), p_paid_amount: num(t.paidAmount), p_payment_method: t.paymentMethod, p_notes2: t.notes2
+      p_repair_cost: num(t.repairCost), p_paid_amount: num(t.paidAmount), p_payment_method: t.paymentMethod, p_notes2: t.notes2,
+      p_photo_url: t.photoUrl || null
     });
     if (error) throw error;
     await fetchTickets();
+  };
+
+  const uploadTicketPhoto = async (ticketId, branchName, file) => {
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${branchName}/${ticketId}-${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage.from("repair-photos").upload(path, file, { upsert: true });
+    if (uploadError) throw uploadError;
+    const { data } = supabase.storage.from("repair-photos").getPublicUrl(path);
+    return data.publicUrl;
   };
 
   const saveStatus = async (t) => {
@@ -1044,6 +1119,7 @@ export default function App() {
             saveFollowup={saveFollowup}
             savePickup={savePickup}
             setTicketNumberAdmin={setTicketNumberAdmin}
+            uploadPhoto={(file) => uploadTicketPhoto(editingTicket.id, branch, file)}
           />
         )}
       </div>

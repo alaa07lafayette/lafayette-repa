@@ -360,7 +360,7 @@ function TicketForm({
       const url = await uploadPhoto(file);
       update({ photoUrl: url });
     } catch (err) {
-      setPhotoError("שגיאה בהעלאת התמונה, נסו שוב");
+      setPhotoError(err.message || "שגיאה בהעלאת התמונה, נסו שוב");
     } finally {
       setUploadingPhoto(false);
       e.target.value = "";
@@ -891,9 +891,12 @@ export default function App() {
     await fetchTickets();
   };
 
+  const BRANCH_SLUG = { "טירה": "tira", "טמרה": "tamra" };
+
   const uploadTicketPhoto = async (ticketId, branchName, file) => {
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `${branchName}/${ticketId}-${Date.now()}.${ext}`;
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const safeBranch = BRANCH_SLUG[branchName] || "branch";
+    const path = `${safeBranch}/${ticketId}-${Date.now()}.${ext}`;
     const { error: uploadError } = await supabase.storage.from("repair-photos").upload(path, file, { upsert: true });
     if (uploadError) throw uploadError;
     const { data } = supabase.storage.from("repair-photos").getPublicUrl(path);

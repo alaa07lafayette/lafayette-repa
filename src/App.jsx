@@ -149,6 +149,7 @@ const rowToTicket = (row) => ({
   },
   pickedUpDate: { value: row.picked_up_date, confirmed: !!row.picked_up_date_confirmed },
   photoUrl: row.photo_url || null,
+  skuNumber: row.sku_number || "",
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
@@ -346,6 +347,11 @@ function TicketForm({
   const update = (patch) => setT((prev) => ({ ...prev, ...patch }));
   const updateNested = (key, patch) => setT((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
 
+  const isOrder = t.serviceType === "הזמנה";
+  const isEngraving = t.serviceType === "חריטה";
+  const remaining = (Number(t.repairCost) || 0) - (Number(t.paidAmount) || 0);
+  const fmtMoney = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
   const flashSaved = (tabKey) => {
     setSavedTab(tabKey);
     setTimeout(() => setSavedTab((cur) => (cur === tabKey ? null : cur)), 1800);
@@ -373,7 +379,7 @@ function TicketForm({
     else if (existingNumbers.includes(t.ticketNumber) && t.ticketNumber !== ticket.ticketNumber) e.ticketNumber = "מספר קריאה כבר קיים במערכת";
     if (!t.serviceType) e.serviceType = "שדה חובה";
     if (!t.itemType) e.itemType = "שדה חובה";
-    if (!t.warranty) e.warranty = "שדה חובה";
+    if (!isOrder && !t.warranty) e.warranty = "שדה חובה";
     if (!t.quantity || Number(t.quantity) < 1) e.quantity = "יש להזין כמות תקינה";
     if (!t.itemDescription.trim()) e.itemDescription = "שדה חובה";
     if (!t.faultDescription.trim()) e.faultDescription = "שדה חובה";
@@ -429,14 +435,16 @@ function TicketForm({
     `*קריאה #${t.ticketNumber}* — לפאייט (${t.branch})`,
     `סוג טיפול: ${t.serviceType}`,
     `פריט: ${t.itemType}`,
-    `תיאור: ${t.itemDescription}`,
+    `${isOrder ? "מותג" : "תיאור"}: ${t.itemDescription}`,
     `כמות: ${t.quantity}`,
-    `תקלה: ${t.faultDescription}`,
-    `אחריות: ${t.warranty}`,
+    `${isOrder ? "תיאור פריט" : "תקלה"}: ${t.faultDescription}`,
+    !isOrder ? `אחריות: ${t.warranty}` : null,
+    isOrder && t.skuNumber ? `מק"ט: ${t.skuNumber}` : null,
     `לקוח: ${t.customerName}`,
     `תאריך פתיחה: ${fmtDate(t.openDate.value)}`,
-    t.repairCost ? `עלות תיקון: ${t.repairCost} ₪` : null,
-    `שולם: ${t.paidAmount || 0} ₪${t.paymentMethod ? " (" + t.paymentMethod + ")" : ""}`
+    t.repairCost ? `${isOrder ? "עלות מוצר" : isEngraving ? "עלות מוצר + חריטה" : "עלות תיקון"}: ${t.repairCost} ₪` : null,
+    `${isOrder ? "ערבון" : "שולם"}: ${t.paidAmount || 0} ₪${t.paymentMethod ? " (" + t.paymentMethod + ")" : ""}`,
+    (isOrder || isEngraving) && t.repairCost ? `${isOrder ? "נשאר לשלם" : "חייב לשלם"}: ${fmtMoney(remaining)} ₪` : null
   ].filter(Boolean).join("\n");
 
   const sendWhatsApp = () => {
@@ -488,7 +496,7 @@ function TicketForm({
               <PillChoice value={t.serviceType} onChange={(v) => update({ serviceType: v })} options={SERVICE_TYPES} />
             </Field>
 
-            {t.serviceType === "הזמנה" && (
+            {isOrder && (
               <Field label="תמונה" error={photoError}>
                 <div className="flex items-center gap-3 flex-wrap">
                   {t.photoUrl && (
@@ -510,21 +518,29 @@ function TicketForm({
             </Field>
 
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="אחריות" required error={errors.warranty}>
-                <PillChoice value={t.warranty} onChange={(v) => update({ warranty: v })} options={WARRANTY_OPTIONS} />
-              </Field>
+              {!isOrder && (
+                <Field label="אחריות" required error={errors.warranty}>
+                  <PillChoice value={t.warranty} onChange={(v) => update({ warranty: v })} options={WARRANTY_OPTIONS} />
+                </Field>
+              )}
               <Field label="כמות פריטים" required error={errors.quantity}>
                 <TextInput type="number" min="1" value={t.quantity} onChange={(e) => update({ quantity: e.target.value })} />
               </Field>
             </div>
 
-            <Field label="תיאור פריט (מותג, צבע וכו')" required error={errors.itemDescription}>
+            <Field label={isOrder ? "מותג" : "תיאור פריט (מותג, צבע וכו')"} required error={errors.itemDescription}>
               <TextInput value={t.itemDescription} onChange={(e) => update({ itemDescription: e.target.value })} />
             </Field>
 
-            <Field label="תיאור תקלה" required error={errors.faultDescription}>
+            <Field label={isOrder ? "תיאור פריט" : "תיאור תקלה"} required error={errors.faultDescription}>
               <Textarea value={t.faultDescription} onChange={(e) => update({ faultDescription: e.target.value })} rows={3} />
             </Field>
+
+            {isOrder && (
+              <Field label="מספר מק״ט">
+                <TextInput value={t.skuNumber} onChange={(e) => update({ skuNumber: e.target.value })} dir="ltr" />
+              </Field>
+            )}
 
             <Field label="תאריך פתיחה" required error={errors.openDate}>
               <DateField field={t.openDate} onChange={(v) => update({ openDate: v })} />
@@ -542,13 +558,18 @@ function TicketForm({
             <div className="lfy-divider pt-3 flex flex-col gap-3">
               <div className="text-sm font-semibold" style={{ color: "#1C2333" }}>שלב 2 — סטטוס כספי</div>
               <div className="grid sm:grid-cols-2 gap-4">
-                <Field label="עלות תיקון">
+                <Field label={isOrder ? "עלות מוצר" : isEngraving ? "עלות מוצר + חריטה" : "עלות תיקון"}>
                   <TextInput type="number" value={t.repairCost} onChange={(e) => update({ repairCost: e.target.value })} />
                 </Field>
-                <Field label="שולם" required error={errors.paidAmount}>
+                <Field label={isOrder ? "ערבון" : "שולם"} required error={errors.paidAmount}>
                   <TextInput type="number" value={t.paidAmount} onChange={(e) => update({ paidAmount: e.target.value })} />
                 </Field>
               </div>
+              {(isOrder || isEngraving) && t.repairCost !== "" && (
+                <div className="text-sm font-medium" style={{ color: remaining > 0 ? "#96271F" : "#1F6B3F" }}>
+                  {isOrder ? "נשאר לשלם" : "חייב לשלם"}: {fmtMoney(remaining)} ₪
+                </div>
+              )}
               <Field label="אופן תשלום" required={Number(t.paidAmount) > 0} error={errors.paymentMethod}>
                 <Select value={t.paymentMethod} onChange={(v) => update({ paymentMethod: v })} options={PAYMENT_METHODS} />
               </Field>
@@ -885,7 +906,7 @@ export default function App() {
       p_customer_name: t.customerName, p_seller_name: t.sellerName, p_open_date: t.openDate.value,
       p_open_date_confirmed: t.openDate.confirmed, p_phone_primary: t.phonePrimary, p_phone_secondary: t.phoneSecondary,
       p_repair_cost: num(t.repairCost), p_paid_amount: num(t.paidAmount), p_payment_method: t.paymentMethod, p_notes2: t.notes2,
-      p_photo_url: t.photoUrl || null
+      p_photo_url: t.photoUrl || null, p_sku_number: t.skuNumber || null
     });
     if (error) throw error;
     await fetchTickets();

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Search, Plus, Calendar, Check, X, MessageCircle, Lock, Unlock,
-  Store, ArrowRight, ArrowUpDown, AlertCircle, ShieldCheck, Home
+  Store, ArrowRight, ArrowUpDown, AlertCircle, ShieldCheck, Home,
+  Trash2, Archive, RotateCcw, BarChart3
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -90,10 +91,12 @@ const STATUS_OPTIONS = [
   "יצא עם סוכן",
   "אי אפשר לתקן",
   "לקוח ביקש לא לתקן",
+  "החלפה - הלקוח לקח פריט אחר במקום",
   "הלקוח אסף את הפריט"
 ];
 
 const STATUS_WITH_EXIT_DATE = ["יצא עם עלאא", "יצא עם סוכן"];
+const STATUS_JUMP_TO_PICKUP = ["הלקוח אסף את הפריט", "החלפה - הלקוח לקח פריט אחר במקום"];
 const CALL_RESULTS = ["ענה", "לא ענה ונשלחה הודעה"];
 
 const STATUS_COLORS = {
@@ -103,6 +106,7 @@ const STATUS_COLORS = {
   "יצא עם סוכן": { bg: "#EEF0FA", text: "#3A3985", dot: "#5E5CC4" },
   "אי אפשר לתקן": { bg: "#FBEAEA", text: "#96271F", dot: "#C4443B" },
   "לקוח ביקש לא לתקן": { bg: "#F2F2F0", text: "#55564F", dot: "#8A8B82" },
+  "החלפה - הלקוח לקח פריט אחר במקום": { bg: "#E6F7F5", text: "#0F6E64", dot: "#1FA396" },
   "הלקוח אסף את הפריט": { bg: "#FBEAF5", text: "#96235F", dot: "#D63F96" }
 };
 
@@ -150,6 +154,8 @@ const rowToTicket = (row) => ({
   pickedUpDate: { value: row.picked_up_date, confirmed: !!row.picked_up_date_confirmed },
   photoUrl: row.photo_url || null,
   skuNumber: row.sku_number || "",
+  deletedAt: row.deleted_at || null,
+  archivedAt: row.archived_at || null,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
@@ -412,13 +418,13 @@ function TicketForm({
 
   const handleSaveStatus = async () => {
     setSavingTab("status");
-    try { await saveStatus(t); flashSaved("status"); if (t.status === "הלקוח אסף את הפריט") setTab("pickup"); }
+    try { await saveStatus(t); flashSaved("status"); if (STATUS_JUMP_TO_PICKUP.includes(t.status)) setTab("pickup"); }
     finally { setSavingTab(null); }
   };
 
   const onStatusChange = (v) => {
     setT((prev) => ({ ...prev, status: v }));
-    if (v === "הלקוח אסף את הפריט") setTab("pickup");
+    if (STATUS_JUMP_TO_PICKUP.includes(v)) setTab("pickup");
   };
 
   const handleSaveFollowup = async () => {
@@ -701,24 +707,162 @@ function TicketForm({
 /* Ticket card + list                                                */
 /* ---------------------------------------------------------------- */
 
-function TicketCard({ t, onOpen }) {
+function TicketCard({ t, onOpen, onDelete }) {
   const colors = STATUS_COLORS[t.status] || { bg: "#F2F2F0", text: "#55564F", dot: "#8A8B82" };
   return (
-    <button onClick={() => onOpen(t.id)} className="lfy-card lfy-card-hover w-full text-right rounded-xl p-4 transition-colors flex flex-col gap-2">
+    <div className="lfy-card lfy-card-hover rounded-xl p-4 transition-colors flex flex-col gap-2 relative">
+      {onDelete && (
+        <button onClick={(e) => { e.stopPropagation(); onDelete(t); }}
+          className="absolute top-2 left-2 lfy-muted hover:text-red-600" style={{ zIndex: 1, minHeight: "auto", padding: 4 }}>
+          <Trash2 size={15} />
+        </button>
+      )}
+      <button onClick={() => onOpen(t.id)} className="w-full text-right flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="font-bold text-base" style={{ color: "#1C2333" }}>#{t.ticketNumber}</span>
+          <span className="lfy-muted flex items-center gap-1 text-xs"><Store size={12} /> {t.branch}</span>
+        </div>
+        <div className="text-sm" style={{ color: "#3A3A34" }}>{t.itemType || "—"} · {t.serviceType || "—"}</div>
+        <div className="lfy-muted text-sm">{t.customerName || "—"}</div>
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-xs font-medium px-2 py-1 rounded-full" style={{ backgroundColor: colors.bg, color: colors.text }}>
+            <span className="inline-block w-1.5 h-1.5 rounded-full ml-1" style={{ backgroundColor: colors.dot }} />
+            {t.status || "ללא סטטוס"}
+          </span>
+          <span className="lfy-muted text-xs flex items-center gap-1"><Calendar size={12} /> {fmtDate(t.openDate.value)}</span>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function TrashArchiveCard({ t, mode, onRestore, onArchive, onPermanentDelete }) {
+  const colors = STATUS_COLORS[t.status] || { bg: "#F2F2F0", text: "#55564F", dot: "#8A8B82" };
+  return (
+    <div className="lfy-card rounded-xl p-4 flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="font-bold text-base" style={{ color: "#1C2333" }}>#{t.ticketNumber}</span>
         <span className="lfy-muted flex items-center gap-1 text-xs"><Store size={12} /> {t.branch}</span>
       </div>
       <div className="text-sm" style={{ color: "#3A3A34" }}>{t.itemType || "—"} · {t.serviceType || "—"}</div>
       <div className="lfy-muted text-sm">{t.customerName || "—"}</div>
-      <div className="flex items-center justify-between mt-1">
-        <span className="text-xs font-medium px-2 py-1 rounded-full" style={{ backgroundColor: colors.bg, color: colors.text }}>
-          <span className="inline-block w-1.5 h-1.5 rounded-full ml-1" style={{ backgroundColor: colors.dot }} />
-          {t.status || "ללא סטטוס"}
-        </span>
-        <span className="lfy-muted text-xs flex items-center gap-1"><Calendar size={12} /> {fmtDate(t.openDate.value)}</span>
+      <span className="text-xs font-medium px-2 py-1 rounded-full w-fit" style={{ backgroundColor: colors.bg, color: colors.text }}>
+        {t.status || "ללא סטטוס"}
+      </span>
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button onClick={() => onRestore(t.id)} className="lfy-btn-outline flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium">
+          <RotateCcw size={13} /> שחזור
+        </button>
+        {mode === "trash" && (
+          <button onClick={() => onArchive(t.id)} className="lfy-btn-outline flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium">
+            <Archive size={13} /> העבר לארכיון
+          </button>
+        )}
+        <button onClick={() => onPermanentDelete(t)} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium" style={{ background: "#FBEAEA", color: "#96271F" }}>
+          <Trash2 size={13} /> מחק לצמיתות
+        </button>
       </div>
-    </button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Summary report (admin only) — read-only, computed client-side      */
+/* ---------------------------------------------------------------- */
+
+function SummaryView({ tickets }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [byItemCount, setByItemCount] = useState(false);
+
+  const filtered = useMemo(() => {
+    let list = tickets;
+    if (fromDate) list = list.filter((t) => (t.openDate.value || "") >= fromDate);
+    if (toDate) list = list.filter((t) => (t.openDate.value || "") <= toDate);
+    return list;
+  }, [tickets, fromDate, toDate]);
+
+  const rows = useMemo(() => {
+    return SERVICE_TYPES.map((type) => {
+      const group = filtered.filter((t) => t.serviceType === type);
+      const cost = group.reduce((s, t) => s + (Number(t.repairCost) || 0), 0);
+      const paid = group.reduce((s, t) => s + (Number(t.paidAmount) || 0), 0);
+      const itemCount = group.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
+      const paymentBreakdown = {};
+      group.forEach((t) => {
+        if (t.paymentMethod && Number(t.paidAmount) > 0) {
+          paymentBreakdown[t.paymentMethod] = (paymentBreakdown[t.paymentMethod] || 0) + Number(t.paidAmount);
+        }
+      });
+      return { type, count: group.length, itemCount, cost, paid, remaining: cost - paid, paymentBreakdown };
+    }).filter((r) => r.count > 0);
+  }, [filtered]);
+
+  const totals = useMemo(() => rows.reduce((acc, r) => ({
+    count: acc.count + r.count, itemCount: acc.itemCount + r.itemCount,
+    cost: acc.cost + r.cost, paid: acc.paid + r.paid, remaining: acc.remaining + r.remaining
+  }), { count: 0, itemCount: 0, cost: 0, paid: 0, remaining: 0 }), [rows]);
+
+  const fmt = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="lfy-muted text-sm">
+        דוח זה קורא נתונים בלבד ואינו משנה שום דבר במערכת. הנתונים לפי תאריך פתיחת קריאה, כולל קריאות בארכיון.
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Field label="מתאריך פתיחה"><TextInput type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} /></Field>
+        <Field label="עד תאריך פתיחה"><TextInput type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} /></Field>
+      </div>
+      <label className="flex items-center gap-2 text-sm font-medium cursor-pointer w-fit">
+        <input type="checkbox" checked={byItemCount} onChange={(e) => setByItemCount(e.target.checked)} style={{ accentColor: "#B8934A" }} className="w-4 h-4" />
+        הצג לפי כמות פריטים (במקום כמות קריאות)
+      </label>
+
+      <div className="lfy-card rounded-xl overflow-x-auto">
+        <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr className="lfy-divider" style={{ background: "#FAF9F5" }}>
+              <th className="text-right p-3 font-semibold">סוג טיפול</th>
+              <th className="text-right p-3 font-semibold">{byItemCount ? "כמות פריטים" : "כמות קריאות"}</th>
+              <th className="text-right p-3 font-semibold">סה"כ עלות</th>
+              <th className="text-right p-3 font-semibold">סה"כ שולם</th>
+              <th className="text-right p-3 font-semibold">נשאר לשלם</th>
+              <th className="text-right p-3 font-semibold">פירוט אמצעי תשלום</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={6} className="p-6 text-center lfy-muted">אין נתונים בטווח שנבחר</td></tr>
+            ) : rows.map((r) => (
+              <tr key={r.type} className="lfy-divider">
+                <td className="p-3">{r.type}</td>
+                <td className="p-3">{byItemCount ? r.itemCount : r.count}</td>
+                <td className="p-3">{fmt(r.cost)} ₪</td>
+                <td className="p-3">{fmt(r.paid)} ₪</td>
+                <td className="p-3" style={{ color: r.remaining > 0 ? "#96271F" : "#1F6B3F" }}>{fmt(r.remaining)} ₪</td>
+                <td className="p-3 text-xs lfy-muted">
+                  {Object.keys(r.paymentBreakdown).length === 0 ? "—" :
+                    Object.entries(r.paymentBreakdown).map(([m, v]) => `${m}: ${fmt(v)} ₪`).join(", ")}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot>
+              <tr style={{ background: "#FAF9F5" }}>
+                <td className="p-3 font-semibold">סה"כ</td>
+                <td className="p-3 font-semibold">{byItemCount ? totals.itemCount : totals.count}</td>
+                <td className="p-3 font-semibold">{fmt(totals.cost)} ₪</td>
+                <td className="p-3 font-semibold">{fmt(totals.paid)} ₪</td>
+                <td className="p-3 font-semibold">{fmt(totals.remaining)} ₪</td>
+                <td className="p-3"></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -726,7 +870,7 @@ function TicketCard({ t, onOpen }) {
 /* Search view                                                        */
 /* ---------------------------------------------------------------- */
 
-function SearchView({ tickets, onOpen }) {
+function SearchView({ tickets, onOpen, isAdmin, onDelete }) {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [serviceTypeFilter, setServiceTypeFilter] = useState("all");
@@ -819,7 +963,7 @@ function SearchView({ tickets, onOpen }) {
       <div className="lfy-muted text-xs">{results.length} תוצאות</div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {results.map((t) => <TicketCard key={t.id} t={t} onOpen={onOpen} />)}
+        {results.map((t) => <TicketCard key={t.id} t={t} onOpen={onOpen} onDelete={isAdmin ? onDelete : undefined} />)}
       </div>
     </div>
   );
@@ -849,6 +993,7 @@ export default function App() {
   const [formDirty, setFormDirty] = useState(false);
   const [liveDraft, setLiveDraft] = useState(null);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveModalIsDraft, setLeaveModalIsDraft] = useState(true);
   const [pendingNav, setPendingNav] = useState("list");
 
   const fetchTickets = useCallback(async () => {
@@ -953,6 +1098,26 @@ export default function App() {
     await fetchTickets();
   };
 
+  const softDeleteTicket = async (id) => {
+    await supabase.rpc("soft_delete_ticket", { p_id: id });
+    await fetchTickets();
+  };
+
+  const restoreTicket = async (id) => {
+    await supabase.rpc("restore_ticket", { p_id: id });
+    await fetchTickets();
+  };
+
+  const archiveTicketFn = async (id) => {
+    await supabase.rpc("archive_ticket", { p_id: id });
+    await fetchTickets();
+  };
+
+  const restoreFromArchive = async (id) => {
+    await supabase.rpc("restore_from_archive", { p_id: id });
+    await fetchTickets();
+  };
+
   const addEmployee = async (name) => {
     await supabase.from("repair_employees").insert({ branch, name });
     await fetchEmployees();
@@ -964,6 +1129,8 @@ export default function App() {
 
   const requestNavigate = (target) => {
     if (view === "form" && formDirty) {
+      const savedState = tickets.find((x) => x.id === editingId);
+      setLeaveModalIsDraft(savedState ? isDraftTicket(savedState) : true);
       setPendingNav(target);
       setShowLeaveModal(true);
     } else {
@@ -972,15 +1139,22 @@ export default function App() {
     }
   };
 
-  const resolveLeaveSaveDraft = async () => {
+  const resolveLeaveSave = async () => {
     if (liveDraft) {
       try {
         if (isAdmin && liveDraft.ticketNumber && liveDraft.ticketNumber !== (tickets.find((x) => x.id === liveDraft.id)?.ticketNumber)) {
           await setTicketNumberAdmin(liveDraft.id, liveDraft.ticketNumber).catch(() => {});
         }
         await Promise.all([saveInfo(liveDraft), saveStatus(liveDraft), saveFollowup(liveDraft), savePickup(liveDraft)]);
-      } catch (e) { /* best effort draft save */ }
+      } catch (e) { /* best effort save */ }
     }
+    setShowLeaveModal(false);
+    setFormDirty(false);
+    setEditingId(null);
+    setView(pendingNav);
+  };
+
+  const resolveLeaveDiscard = () => {
     setShowLeaveModal(false);
     setFormDirty(false);
     setEditingId(null);
@@ -996,29 +1170,55 @@ export default function App() {
   };
 
   const openTicketsForBranch = useMemo(
-    () => tickets.filter((t) => t.branch === branch && !t.pickedUpDate.confirmed),
+    () => tickets.filter((t) => t.branch === branch && !t.pickedUpDate.confirmed && !t.deletedAt && !t.archivedAt),
     [tickets, branch]
   );
-  const allTicketsForBranch = useMemo(() => tickets.filter((t) => t.branch === branch), [tickets, branch]);
+  const allTicketsForBranch = useMemo(
+    () => tickets.filter((t) => t.branch === branch && !t.deletedAt && !t.archivedAt),
+    [tickets, branch]
+  );
   const draftsForBranch = useMemo(
-    () => tickets.filter((t) => t.branch === branch && !t.pickedUpDate.confirmed && isDraftTicket(t)),
+    () => tickets.filter((t) => t.branch === branch && !t.pickedUpDate.confirmed && isDraftTicket(t) && !t.deletedAt && !t.archivedAt),
+    [tickets, branch]
+  );
+  const trashForBranch = useMemo(
+    () => tickets.filter((t) => t.branch === branch && t.deletedAt && !t.archivedAt),
+    [tickets, branch]
+  );
+  const archiveForBranch = useMemo(
+    () => tickets.filter((t) => t.branch === branch && t.archivedAt),
     [tickets, branch]
   );
 
+  const [confirmAction, setConfirmAction] = useState(null); // { ticket, mode: 'trash' | 'hardDelete' }
+
+  useEffect(() => {
+    if (!isAdmin && ["trash", "archive", "summary"].includes(view)) setView("list");
+  }, [isAdmin]);
+
+  const runConfirmedAction = async () => {
+    if (!confirmAction) return;
+    if (confirmAction.mode === "trash") await softDeleteTicket(confirmAction.ticket.id);
+    else await deleteTicket(confirmAction.ticket.id);
+    setConfirmAction(null);
+  };
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("ticketNumber");
+  const [sortDir, setSortDir] = useState("desc");
 
   const filteredList = useMemo(() => {
     let list = openTicketsForBranch;
     if (statusFilter !== "all") list = list.filter((t) => t.status === statusFilter);
     list = [...list].sort((a, b) => {
-      if (sortBy === "ticketNumber") return a.ticketNumber.localeCompare(b.ticketNumber);
-      if (sortBy === "openDate") return (a.openDate.value || "").localeCompare(b.openDate.value || "");
-      if (sortBy === "status") return (a.status || "").localeCompare(b.status || "");
-      return 0;
+      let cmp = 0;
+      if (sortBy === "ticketNumber") cmp = a.ticketNumber.localeCompare(b.ticketNumber);
+      if (sortBy === "openDate") cmp = (a.openDate.value || "").localeCompare(b.openDate.value || "");
+      if (sortBy === "status") cmp = (a.status || "").localeCompare(b.status || "");
+      return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [openTicketsForBranch, statusFilter, sortBy]);
+  }, [openTicketsForBranch, statusFilter, sortBy, sortDir]);
 
   const editingTicket = tickets.find((t) => t.id === editingId);
 
@@ -1053,6 +1253,25 @@ export default function App() {
               className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium">
               {isAdmin ? <Unlock size={14} /> : <Lock size={14} />} מצב מנהל
             </button>
+            {isAdmin && (
+              <>
+                <button onClick={() => requestNavigate("trash")} title="סל מיחזור"
+                  style={{ border: "1px solid #3A4258", color: "#B8B9C5" }}
+                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium">
+                  <Trash2 size={14} /> {trashForBranch.length > 0 ? trashForBranch.length : ""}
+                </button>
+                <button onClick={() => requestNavigate("archive")} title="ארכיון"
+                  style={{ border: "1px solid #3A4258", color: "#B8B9C5" }}
+                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium">
+                  <Archive size={14} /> {archiveForBranch.length > 0 ? archiveForBranch.length : ""}
+                </button>
+                <button onClick={() => requestNavigate("summary")} title="דוח סיכום"
+                  style={{ border: "1px solid #3A4258", color: "#B8B9C5" }}
+                  className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm font-medium">
+                  <BarChart3 size={14} />
+                </button>
+              </>
+            )}
             {view === "list" && (
               <button onClick={newTicket} className="lfy-btn-gold flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold">
                 <Plus size={16} /> קריאה חדשה
@@ -1083,6 +1302,9 @@ export default function App() {
                   <option value="status">מיון: סטטוס</option>
                 </select>
               </div>
+              <button onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))} className="lfy-btn-outline flex items-center gap-1 rounded-lg px-3 py-2 text-sm w-fit">
+                <ArrowUpDown size={14} /> {sortDir === "asc" ? "עולה" : "יורד"}
+              </button>
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-1">
@@ -1105,7 +1327,7 @@ export default function App() {
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredList.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} />)}
+                {filteredList.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} onDelete={isAdmin ? (tk) => setConfirmAction({ ticket: tk, mode: isDraftTicket(tk) ? "hardDelete" : "trash" }) : undefined} />)}
               </div>
             )}
           </div>
@@ -1120,13 +1342,58 @@ export default function App() {
               <div className="lfy-muted text-center py-16 text-sm">אין טיוטות פתוחות בסניף {branch}</div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {draftsForBranch.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} />)}
+                {draftsForBranch.map((t) => <TicketCard key={t.id} t={t} onOpen={openTicket} onDelete={isAdmin ? (tk) => setConfirmAction({ ticket: tk, mode: "hardDelete" }) : undefined} />)}
               </div>
             )}
           </div>
         )}
 
-        {view === "search" && <SearchView tickets={allTicketsForBranch} onOpen={openTicket} />}
+        {view === "search" && (
+          <SearchView
+            tickets={allTicketsForBranch}
+            onOpen={openTicket}
+            isAdmin={isAdmin}
+            onDelete={(tk) => setConfirmAction({ ticket: tk, mode: isDraftTicket(tk) ? "hardDelete" : "trash" })}
+          />
+        )}
+
+        {view === "trash" && (
+          <div className="flex flex-col gap-4">
+            <div className="lfy-muted text-sm">קריאות שהועברו לסל המיחזור בסניף {branch}. אפשר לשחזר, להעביר לארכיון, או למחוק לצמיתות.</div>
+            {trashForBranch.length === 0 ? (
+              <div className="lfy-muted text-center py-16 text-sm">סל המיחזור ריק</div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {trashForBranch.map((t) => (
+                  <TrashArchiveCard key={t.id} t={t} mode="trash"
+                    onRestore={restoreTicket} onArchive={archiveTicketFn}
+                    onPermanentDelete={(tk) => setConfirmAction({ ticket: tk, mode: "hardDelete" })} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "archive" && (
+          <div className="flex flex-col gap-4">
+            <div className="lfy-muted text-sm">קריאות בארכיון בסניף {branch}. אפשר לשחזר חזרה לרשימה הפעילה, או למחוק לצמיתות.</div>
+            {archiveForBranch.length === 0 ? (
+              <div className="lfy-muted text-center py-16 text-sm">הארכיון ריק</div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {archiveForBranch.map((t) => (
+                  <TrashArchiveCard key={t.id} t={t} mode="archive"
+                    onRestore={restoreFromArchive}
+                    onPermanentDelete={(tk) => setConfirmAction({ ticket: tk, mode: "hardDelete" })} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === "summary" && (
+          <SummaryView tickets={tickets.filter((t) => t.branch === branch && !t.deletedAt)} />
+        )}
 
         {view === "form" && editingTicket && (
           <TicketForm
@@ -1166,18 +1433,48 @@ export default function App() {
               <AlertCircle size={18} /> יש שינויים שלא נשמרו
             </div>
             <div className="lfy-muted text-sm">
-              יצאתם מקריאה #{liveDraft?.ticketNumber || "—"} לפני שנשמרה. מה לעשות עם השינויים?
+              {leaveModalIsDraft
+                ? `יצאתם מקריאה #${liveDraft?.ticketNumber || "—"} לפני שנשמרה. מה לעשות עם השינויים?`
+                : `יש לכם שינויים שלא נשמרו בקריאה #${liveDraft?.ticketNumber || "—"}. האם לשמור אותם?`}
             </div>
             <div className="flex flex-col gap-2 mt-1">
-              <button onClick={resolveLeaveSaveDraft} className="lfy-btn-gold rounded-lg px-4 py-2.5 text-sm font-semibold">
-                שמור כטיוטה והמשך
+              <button onClick={resolveLeaveSave} className="lfy-btn-gold rounded-lg px-4 py-2.5 text-sm font-semibold">
+                {leaveModalIsDraft ? "שמור כטיוטה והמשך" : "שמור שינויים"}
               </button>
-              <button onClick={resolveLeaveDelete} className="rounded-lg px-4 py-2.5 text-sm font-semibold" style={{ background: "#FBEAEA", color: "#96271F" }}>
-                מחק את הקריאה
-              </button>
+              {leaveModalIsDraft ? (
+                <button onClick={resolveLeaveDelete} className="rounded-lg px-4 py-2.5 text-sm font-semibold" style={{ background: "#FBEAEA", color: "#96271F" }}>
+                  מחק את הקריאה
+                </button>
+              ) : (
+                <button onClick={resolveLeaveDiscard} className="lfy-btn-outline rounded-lg px-4 py-2.5 text-sm font-semibold">
+                  אל תשמור
+                </button>
+              )}
               <button onClick={() => setShowLeaveModal(false)} className="lfy-btn-outline rounded-lg px-4 py-2 text-sm">
                 ביטול — המשך לערוך
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAction && (
+        <div className="fixed inset-0 flex items-center justify-center z-40 p-4" style={{ background: "rgba(0,0,0,0.4)" }} onClick={() => setConfirmAction(null)}>
+          <div className="lfy-card rounded-xl max-w-sm w-full p-5 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+            <div className="font-bold flex items-center gap-2" style={{ color: "#1C2333" }}>
+              <AlertCircle size={18} /> {confirmAction.mode === "trash" ? "העברה לסל מיחזור" : "מחיקה לצמיתות"}
+            </div>
+            <div className="lfy-muted text-sm">
+              {confirmAction.mode === "trash"
+                ? `להעביר את קריאה #${confirmAction.ticket.ticketNumber} לסל המיחזור? אפשר לשחזר אותה משם בכל שלב.`
+                : `למחוק את קריאה #${confirmAction.ticket.ticketNumber} לצמיתות? פעולה זו בלתי הפיכה ולא ניתן לשחזר.`}
+            </div>
+            <div className="flex gap-2 mt-1">
+              <button onClick={runConfirmedAction} className="flex-1 rounded-lg px-4 py-2.5 text-sm font-semibold"
+                style={confirmAction.mode === "trash" ? { background: "#B8934A", color: "#fff" } : { background: "#C4443B", color: "#fff" }}>
+                {confirmAction.mode === "trash" ? "העבר לסל מיחזור" : "מחק לצמיתות"}
+              </button>
+              <button onClick={() => setConfirmAction(null)} className="lfy-btn-outline rounded-lg px-4 py-2.5 text-sm">ביטול</button>
             </div>
           </div>
         </div>
